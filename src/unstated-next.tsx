@@ -8,17 +8,27 @@ export type ContainerProviderProps<
 	initialState: State
 }>
 
+export type ContainerConsumerProps<Value> = {
+	children: (value: Value) => React.ReactNode
+}
+
 export type UseHookFn<Value, State extends any[]> = (...args: State) => Value
 
-export interface Container<Value, State extends any[]> {
-	Provider: React.ComponentType<ContainerProviderProps<State>>
-	useContainer: () => Value
+interface withContainerBaseProps<Value> {
+	$inject: Value
+}
+
+function providerRequired<Value>(value: Value | typeof EMPTY): Value {
+	if (value === EMPTY) {
+		throw new Error("Component must be wrapped with <Container.Provider>")
+	}
+	return value
 }
 
 export function createContainer<Value, State extends any[]>(
 	useHook: UseHookFn<Value, State>,
-): Container<Value, State> {
-	let Context = React.createContext<Value | typeof EMPTY>(EMPTY)
+) {
+	const Context = React.createContext<Value | typeof EMPTY>(EMPTY)
 
 	function Provider({ initialState, children }: ContainerProviderProps<State>) {
 		const value = useHook(...initialState)
@@ -26,18 +36,41 @@ export function createContainer<Value, State extends any[]>(
 	}
 
 	function useContainer(): Value {
-		let value = React.useContext(Context)
-		if (value === EMPTY) {
-			throw new Error("Component must be wrapped with <Container.Provider>")
-		}
-		return value
+		const value = React.useContext(Context)
+		return providerRequired(value)
 	}
 
-	return { Provider, useContainer }
-}
+	function withContainer<P extends withContainerBaseProps<Value>>(
+		Component: React.ComponentType<P>,
+	) {
+		const componentName = Component.name || "Anonymous"
+		const Consumer = ({ children }: ContainerConsumerProps<Value>) => {
+			return (
+				<Context.Consumer>
+					{value => {
+						return children(providerRequired(value))
+					}}
+				</Context.Consumer>
+			)
+		}
+		const result = {
+			[componentName]: {
+				Consumer,
+				WrappedComponent: (props: P) => {
+					return (
+						<Context.Consumer>
+							{value => {
+								return (
+									<Component {...props} $inject={providerRequired(value)} />
+								)
+							}}
+						</Context.Consumer>
+					)
+				},
+			},
+		}
+		return result[componentName]
+	}
 
-export function useContainer<Value, State extends any[]>(
-	container: Container<Value, State>,
-): Value {
-	return container.useContainer()
+	return { Provider, useContainer, withContainer }
 }
